@@ -1,7 +1,7 @@
 ---
 title: "01-comandos.Rmd"
 author: "eveiramirez"
-date: "3/2/2022"
+date: "4/2/2022"
 output: html_document
 ---
 
@@ -9,22 +9,84 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## Proyecto
-Este es el proyecto.
-<http://rmarkdown.rstudio.com>.
+## Proyecto  
+A continuacion se presentara el estudio SRA SRP102549, el cual es un analisis de
+transcriptoma con datos de 81 lineas celulares de cancer de higado.  
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+Identificadores  
+SRA:[SRP102549](https://trace.ncbi.nlm.nih.gov/Traces/sra?study=SRP102549)  
+BioProject:[PRJNA380668](https://www.ncbi.nlm.nih.gov//bioproject/PRJNA380668)  
+GEO:[GSE97098](https://www.ncbi.nlm.nih.gov//geo/query/acc.cgi?acc=GSE97098)  
 
-```{r cars}
-summary(cars)
+PubMed Link  
+PUBMED:[31378681](https://www.ncbi.nlm.nih.gov//pubmed/31378681)
+
+
+```{r start, warning=FALSE, message=FALSE, eval=FALSE}
+## Cargar el paquete recount3 y iSEE
+library("recount3")
+library("iSEE")
+
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
+```{r project, eval=FALSE}
+### Se obtienen los datos del proyecto  
+rse_project_srp102549 <- recount3::create_rse_manual(
+    project = "SRP102549",
+    project_home = "data_sources/sra",
+    organism = "human",
+    annotation = "gencode_v29",
+    type = "gene"
+)
 
-```{r pressure, echo=FALSE}
-plot(pressure)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r tranform counts, eval=FALSE}
+assay(rse_project_srp102549, "counts") <- transform_counts(rse_project_srp102549)
+
+```
+
+
+```{r expand attributes, eval=FALSE}
+## Expandir los atributos sra
+rse_project_srp102549 <- expand_sra_attributes(rse_project_srp102549)
+
+```
+
+
+colData(rse_project_srp102549)[
+    ,
+    grepl("^sra_attribute", colnames(colData(rse_project_srp102549)))
+]
+
+iSEE::iSEE(rse_project_srp102549)
+
+```{r quality control, eval=FALSE}
+## Obtener proporcion de lecturas asignadas
+rse_project_srp102549_qc<-rse_project_srp102549
+rse_project_srp102549_qc$assigned_gene_prop <- rse_project_srp102549$recount_qc.gene_fc_count_all.assigned / rse_project_srp102549$recount_qc.gene_fc_count_all.total
+
+
+summary(rse_project_srp102549_qc$assigned_gene_prop)
+hist(rse_project_srp102549_qc$assigned_gene_prop)
+rse_project_srp102549_qc <- rse_project_srp102549_qc[, rse_project_srp102549_qc$assigned_gene_prop > 0.75]
+
+gene_means <- rowMeans(assay(rse_project_srp102549_qc, "counts"))
+summary(gene_means)
+plot(gene_means)
+rse_project_srp102549_qc <- rse_project_srp102549_qc[gene_means > 0.1, ]
+
+```
+
+
+
+
+
+## Referencias
+```{r citation, message = FALSE, echo=FALSE}
+## Citation info
+print(citation("recount3")[2], bibtex = TRUE) 
+
+```
