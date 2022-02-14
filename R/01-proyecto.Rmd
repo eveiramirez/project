@@ -1,0 +1,183 @@
+---
+title: "Proyecto"
+author: "eveiramirez"
+date: "14/02/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Este proyecto es sobre el estudio SRA SRP194241, el cual es un analisis transcriptomico donde se reporta la existencia de una poblacion de progenitores hibridos hepatobiliares (HHyP) en el higado fetal humano.  
+
+Identificadores  
+SRA:[SRP194241](https://trace.ncbi.nlm.nih.gov/Traces/sra?study=SRP194241)  
+BioProject:[PRJNA540429](https://www.ncbi.nlm.nih.gov//bioproject/PRJNA540429)  
+GEO:[GSE130473](https://www.ncbi.nlm.nih.gov//geo/query/acc.cgi?acc=GSE130473)  
+
+PubMed Link  
+PUBMED:[31350390](https://www.ncbi.nlm.nih.gov//pubmed/31350390)
+
+
+## Paquetes
+```{r start, warning=FALSE, message=FALSE, eval=FALSE}
+## Cargar el paquete recount3 y iSEE
+library("recount3")
+library("iSEE")
+library("here")
+library("edgeR")
+library("limma")
+library("scater")
+
+```
+
+## Directorios
+Durante el transcurso del proyecto se crearan distintas figuras las cuales se guardaran en los directorios del proyecto, por lo que se generaran las rutas que lleven a estos directorios.  
+
+```{r dir, warning=FALSE, message=FALSE}
+## Crear directorios de trabajo
+dir_plots <- here::here("figures")
+
+```
+
+## Obtencion de datos
+Se obtendra el proyecto SRP194241 de recount3, del cual su anotacion sera de tipo gencode_v29 y tendra la informacion de los genes.  
+
+```{r project, eval=FALSE}
+### Obtener los datos del proyecto  
+rse_project_SRP194241 <- recount3::create_rse_manual(
+    project = "SRP194241",
+    project_home = "data_sources/sra",
+    organism = "human",
+    annotation = "gencode_v29",
+    type = "gene"
+)
+
+```
+
+
+```{r tranform counts, eval=FALSE}
+# Obtener el numero de cuentas
+assay(rse_project_SRP194241, "counts") <- transform_counts(rse_project_SRP194241)
+
+```
+
+
+```{r expand attributes, eval=FALSE}
+## Expandir los atributos sra
+rse_project_SRP194241 <- expand_sra_attributes(rse_project_SRP194241)
+## Explorar los datos con iSEE
+iSEE::iSEE(rse_project_SRP194241)
+
+```
+
+
+
+## Control de calidad  
+En esta parte se obtendran la proporcion de lecturas asignadas a los genes y los promedios de expresion. Con estas variables se realizara el control de calidad, ya que ambas son muy útiles como medidas de calidad de los datos.  
+
+```{r quality control, eval=FALSE}
+## Obtener proporcion de lecturas asignadas de los genes
+rse_project_SRP194241_qc<-rse_project_SRP194241
+rse_project_SRP194241_qc$assigned_gene_prop <- rse_project_SRP194241$recount_qc.gene_fc_count_all.assigned / rse_project_SRP194241$recount_qc.gene_fc_count_all.total
+
+
+## Mostrar resumen de los valores de assigned_gene_prop
+summary(rse_project_SRP194241_qc$assigned_gene_prop)
+## Crear histograma de la proporcion de lecturas asignadas a genes
+svg(file.path(dir_plots, "assigned_gene_prop.svg"))
+hist(rse_project_SRP194241_qc$assigned_gene_prop)
+dev.off()
+## Eliminar muestras de mala calidad por debajo de la mediana
+rse_project_SRP194241_qc <- rse_project_SRP194241_qc[, rse_project_SRP194241_qc$assigned_gene_prop > 0.17784]
+
+## Crear histograma sin las muestras de mala calidad
+svg(file.path(dir_plots, "assigned_gene_prop_filtered.svg"))
+hist(rse_project_SRP194241_qc$assigned_gene_prop)
+dev.off()
+## Mostrar el nuevo resumen de los valores de assigned_gene_prop
+summary(rse_project_SRP194241_qc$assigned_gene_prop)
+
+## Obtener los promedios de expresion de genes
+gene_means <- rowMeans(assay(rse_project_SRP194241_qc, "counts"))
+summary(gene_means)
+## Crear plot de las expresiones promedio de los genes
+svg(file.path(dir_plots, "gene_means.svg"))
+plot(gene_means)
+dev.off()
+## Eliminar genes con una expresion promedio menor o igual a la mediana
+rse_project_SRP194241_qc <- rse_project_SRP194241_qc[gene_means > 0.3, ]
+
+## Crear plot de las expresiones promedio de los genes filtrados
+gene_means <- rowMeans(assay(rse_project_SRP194241_qc, "counts"))
+svg(file.path(dir_plots, "gene_means_filtered.svg"))
+plot(gene_means)
+dev.off()
+
+```
+
+
+## Normalizacion de datos   
+Se normalizaran los datos de expresion de los genes para evitar que durante el analisis de expresion diferencial aquellos genes que tengan el mismo nivel de expresion entre muestras puedan marcarse como diferencialmente expresado ( dado que no deberian de marcarse como tal).  
+Para la normalizacion de los datos se empleara el paquete de limma y edgeR
+
+```{r normalization, eval=FALSE}
+## Cambiar los valores del atributo sra_attribute.Sex a factor
+rse_project_SRP194241_qc$sra_attribute.Sex <- factor(rse_project_SRP194241_qc$sra_attribute.Sex)
+
+## Se crea el objeto DGEList
+dge <- DGEList(
+    counts = assay(rse_project_SRP194241_qc, "counts"),
+    genes = rowData(rse_project_SRP194241_qc)
+)
+dge <- calcNormFactors(dge)
+
+## Explorar las variables
+sce <- logNormCounts(rse_project_SRP194241_qc) 
+
+vars <- getVarianceExplained(sce, 
+    variables=c("sra_attribute.developmental_stage", "sra_attribute.Sex", "assigned_gene_prop"))
+
+## Graficar la varianza explicada por las variables
+svg(file.path(dir_plots, "variance_explained.svg"))
+plotExplanatoryVariables(vars)
+dev.off()
+
+## Crear el modelo estadistico
+mod <- model.matrix(~ sra_attribute.developmental_stage + sra_attribute.Sex + assigned_gene_prop,
+    data = colData(rse_project_SRP194241_qc)
+)
+
+
+## Crear plot de las expresiones promedio de los genes
+svg(file.path(dir_plots, "mean_variance_trend.svg"))
+vGene <- voom(dge, mod, plot = TRUE)
+dev.off()
+
+```
+
+
+## Graficas  
+```{r figures, echo=FALSE, out.width = "50%", out.height = "50%", fig.align='center'}
+knitr::include_graphics(file.path(dir_plots, "assigned_gene_prop.svg"))
+
+knitr::include_graphics(file.path(dir_plots, "assigned_gene_prop_filtered.svg"))
+
+knitr::include_graphics(file.path(dir_plots, "gene_means.svg"))
+
+knitr::include_graphics(file.path(dir_plots, "gene_means_filtered.svg"))
+
+knitr::include_graphics(file.path(dir_plots, "mean_variance_trend.svg"))
+
+knitr::include_graphics(file.path(dir_plots, "variance_explained.svg"))
+
+```
+
+
+# Referencias
+```{r citation, message = FALSE, echo=FALSE}
+## Citation info
+print(citation("recount3")[2], bibtex = TRUE) 
+
+```
